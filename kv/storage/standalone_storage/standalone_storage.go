@@ -19,8 +19,11 @@ type StandAloneStorage struct {
 }
 
 func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
-	db := engine_util.CreateDB(conf.DBPath, conf.Raft)
-	engine := engine_util.NewEngines(db, nil, path.Join(conf.DBPath, "kv"), "")
+	kvPath := path.Join(conf.DBPath, "kv")
+	kvEngine := engine_util.CreateDB(kvPath, conf.Raft)
+	raftPath := path.Join(conf.DBPath, "raft")
+	raftEngine := engine_util.CreateDB(raftPath, conf.Raft)
+	engine := engine_util.NewEngines(kvEngine, raftEngine, kvPath, raftPath)
 
 	return &StandAloneStorage{
 		engine: engine,
@@ -40,12 +43,14 @@ func (s *StandAloneStorage) Stop() error {
 
 func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, error) {
 	txn := s.engine.Kv.NewTransaction(false) // badger手动管理事务，false代表只读事务
+
 	return &StandAloneStorageReader{
 		txn: txn,
 	}, nil
 }
 
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
+
 	for _, m := range batch {
 		switch m.Data.(type) {
 		case storage.Put:
@@ -58,6 +63,7 @@ func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) 
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -66,7 +72,11 @@ type StandAloneStorageReader struct {
 }
 
 func (reader *StandAloneStorageReader) GetCF(cf string, key []byte) ([]byte, error) {
-	return engine_util.GetCFFromTxn(reader.txn, cf, key)
+	values, err := engine_util.GetCFFromTxn(reader.txn, cf, key)
+	if err != nil && err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	return values, nil
 }
 
 func (reader *StandAloneStorageReader) IterCF(cf string) engine_util.DBIterator {

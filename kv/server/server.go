@@ -38,6 +38,7 @@ func NewServer(storage storage.Storage) *Server {
 // Raw API.
 func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	// Your Code Here (1).
+
 	reader, err := server.storage.Reader(req.GetContext())
 	if err != nil {
 		return &kvrpcpb.RawGetResponse{
@@ -50,43 +51,47 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 			Error: err.Error(),
 		}, nil
 	}
-	noFound := false
+	NotFound := false
 	if values == nil {
-		noFound = true
+		NotFound = true
 	}
 	return &kvrpcpb.RawGetResponse{
 		Value:    values,
-		NotFound: noFound,
+		NotFound: NotFound,
 	}, nil
 }
 
 func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kvrpcpb.RawPutResponse, error) {
 	// Your Code Here (1).
 	m := storage.Modify{
-		Data: &storage.Put{
+		Data: storage.Put{
 			Key:   req.GetKey(),
 			Value: req.GetValue(),
 			Cf:    req.GetCf(),
 		},
 	}
-	err := server.storage.Write(req.GetContext(), []storage.Modify{m})
-	return &kvrpcpb.RawPutResponse{
-		Error: err.Error(),
-	}, nil
+	if err := server.storage.Write(req.GetContext(), []storage.Modify{m}); err != nil {
+		return &kvrpcpb.RawPutResponse{
+			Error: err.Error(),
+		}, nil
+	}
+	return &kvrpcpb.RawPutResponse{}, nil
 }
 
 func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest) (*kvrpcpb.RawDeleteResponse, error) {
 	// Your Code Here (1).
 	m := storage.Modify{
-		Data: &storage.Delete{
+		Data: storage.Delete{
 			Key: req.GetKey(),
 			Cf:  req.GetCf(),
 		},
 	}
-	err := server.storage.Write(req.GetContext(), []storage.Modify{m})
-	return &kvrpcpb.RawDeleteResponse{
-		Error: err.Error(),
-	}, nil
+	if err := server.storage.Write(req.GetContext(), []storage.Modify{m}); err != nil {
+		return &kvrpcpb.RawDeleteResponse{
+			Error: err.Error(),
+		}, nil
+	}
+	return &kvrpcpb.RawDeleteResponse{}, nil
 }
 
 func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
