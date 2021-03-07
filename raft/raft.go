@@ -165,7 +165,20 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	return nil
+	var votes map[uint64]bool
+	for _, peer := range c.peers {
+		votes[peer] = false
+	}
+	// newRaft(newTestConfig(id, peers, election, heartbeat, storage))
+	return &Raft{
+		id:               c.ID,
+		electionTimeout:  c.ElectionTick,
+		heartbeatTimeout: c.HeartbeatTick,
+		State:            StateFollower,
+		votes:            votes,
+		// storage可能在实现Log的时候才会用
+
+	}
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the
@@ -188,27 +201,45 @@ func (r *Raft) tick() {
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	// Your Code Here (2A).
+	r.Term = term
+	r.Lead = lead
+	r.State = StateFollower
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	r.State = StateCandidate
 }
 
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	r.State = StateLeader
+	// 没有发送noop entry
 }
 
 // Step the entrance of handle message, see `MessageType`
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+
+	// r.Step(pb.Message{MsgType: pb.MessageType_MsgAppend, Term: 2})
+
 	switch r.State {
 	case StateFollower:
+		if m.GetMsgType() == pb.MessageType_MsgAppend && m.GetTerm() > r.Term {
+			r.Term = m.GetTerm()
+		}
 	case StateCandidate:
+		if m.GetMsgType() == pb.MessageType_MsgAppend && m.GetTerm() > r.Term {
+			r.becomeFollower(m.GetTerm(), m.GetFrom())
+		}
 	case StateLeader:
+		if m.GetMsgType() == pb.MessageType_MsgAppend && m.GetTerm() > r.Term {
+			r.becomeFollower(m.GetTerm(), m.GetFrom())
+		}
 	}
 	return nil
 }
