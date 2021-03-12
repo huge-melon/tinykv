@@ -165,7 +165,8 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	var votes map[uint64]bool
+	votes := make(map[uint64]bool)
+
 	for _, peer := range c.peers {
 		votes[peer] = false
 	}
@@ -176,6 +177,8 @@ func newRaft(c *Config) *Raft {
 		heartbeatTimeout: c.HeartbeatTick,
 		State:            StateFollower,
 		votes:            votes,
+		msgs:             make([]pb.Message, 0),
+		Term:             1,
 		// storage可能在实现Log的时候才会用
 
 	}
@@ -191,11 +194,29 @@ func (r *Raft) sendAppend(to uint64) bool {
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgHeartbeat, To: to, From: r.id, Term: r.Term})
 }
 
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
+	// heartbeatTicker := time.NewTicker(time.Duration(r.heartbeatTimeout) * time.Millisecond)
+	// electionTicker := time.NewTicker(time.Duration(r.electionTimeout) * time.Millisecond)
+	r.electionElapsed++
+	r.heartbeatElapsed++
+	if r.heartbeatElapsed == r.heartbeatTimeout {
+		r.electionElapsed = 0
+		for peer, _ := range r.votes {
+			if peer != r.id {
+				r.sendHeartbeat(peer)
+			}
+		}
+	}
+	if r.electionElapsed == r.electionTimeout {
+		r.electionElapsed = 0
+
+	}
+
 }
 
 // becomeFollower transform this peer's state to Follower
@@ -225,21 +246,22 @@ func (r *Raft) becomeLeader() {
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
 
-	// r.Step(pb.Message{MsgType: pb.MessageType_MsgAppend, Term: 2})
-
-	switch r.State {
-	case StateFollower:
-		if m.GetMsgType() == pb.MessageType_MsgAppend && m.GetTerm() > r.Term {
+	switch m.GetMsgType() {
+	case pb.MessageType_MsgHeartbeat:
+		r.handleHeartbeat(m)
+	case pb.MessageType_MsgPropose:
+		r.handleAppendEntries(m)
+	case pb.MessageType_MsgAppend:
+		if r.State == StateFollower && m.GetTerm() > r.Term {
 			r.Term = m.GetTerm()
 		}
-	case StateCandidate:
-		if m.GetMsgType() == pb.MessageType_MsgAppend && m.GetTerm() > r.Term {
+		if r.State == StateCandidate && m.GetTerm() > r.Term {
 			r.becomeFollower(m.GetTerm(), m.GetFrom())
 		}
-	case StateLeader:
-		if m.GetMsgType() == pb.MessageType_MsgAppend && m.GetTerm() > r.Term {
+		if r.State == StateLeader && m.GetTerm() > r.Term {
 			r.becomeFollower(m.GetTerm(), m.GetFrom())
 		}
+
 	}
 	return nil
 }

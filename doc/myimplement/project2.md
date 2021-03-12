@@ -18,6 +18,16 @@ func newRaft(c *Config) *Raft
 3. `raft.Step()`往前走一步
     `proto/pkg/eraftpb/eraftpb.pb.go`中定义了，不同的消息类型，需要根据不同的类型，进行处理
 
+4. 所有需要向外发送的数据全部压入, raft.msgs中
+5. raft.step() 处理接收到的数据
+6. 时钟说明：
+```go
+heartbeatTimeout // 发送心跳的时间间隔
+heartbeatElapsed // 距离上一次发送心跳已经过去的时间
+
+electionTimeout // 选举超时的时间间隔
+electionElapsed // 距离上一次进行选举已经过去的时间
+```
 ## raft基础
 1. term在Raft算法中作为**逻辑时钟**
 2. 服务器之间通信时会交换当term
@@ -44,3 +54,10 @@ func newRaft(c *Config) *Raft
       - 否则，拒绝该RPC
    2. 票数相等：等待超时进行下一轮选举
       - 选举超时时间是从一个固定的区间（例如 150-300 毫秒）随机选择；实际情况下心跳间隔(0.5-20ms)，选举超时(10-500ms)
+
+
+
+   ElectionTick is the number of Node.Tick invocations that must pass between elections. That is, if a follower does not receive any message from the leader of current term before ElectionTick has elapsed, it will become candidate and start an election. ElectionTick must be greater than HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid unnecessary leader switching.
+
+
+	HeartbeatTick is the number of Node.Tick invocations that must pass between heartbeats. That is, a leader sends heartbeat messages to maintain its leadership every HeartbeatTick ticks.
