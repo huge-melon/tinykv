@@ -279,7 +279,7 @@ func testNonleaderElectionTimeoutRandomized(t *testing.T, state StateType) {
 	et := 10
 	r := newTestRaft(1, []uint64{1, 2, 3}, et, 1, NewMemoryStorage())
 	timeouts := make(map[int]bool)
-	for round := 0; round < 50*et; round++ {
+	for round := 0; round < 50*et; round++ { // 500次是为了产生的随机数能够覆盖整个区间
 		switch state {
 		case StateFollower:
 			r.becomeFollower(r.Term+1, 2)
@@ -302,7 +302,7 @@ func testNonleaderElectionTimeoutRandomized(t *testing.T, state StateType) {
 	}
 }
 
-func TestFollowersElectionTimeoutNonconflict2AA(t *testing.T) {
+func TestFollowersElectionTimeoutNonconflict2AA(t *testing.T) { // 测试随机数分布区间
 	testNonleadersElectionTimeoutNonconflict(t, StateFollower)
 }
 func TestCandidatesElectionTimeoutNonconflict2AA(t *testing.T) {
