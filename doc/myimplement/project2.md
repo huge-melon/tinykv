@@ -19,7 +19,7 @@ func newRaft(c *Config) *Raft
     `proto/pkg/eraftpb/eraftpb.pb.go`中定义了，不同的消息类型，需要根据不同的类型，进行处理
 
 4. 所有需要向外发送的数据全部压入, raft.msgs中
-5. raft.step() 处理接收到的数据
+5. raft.step() 处理接收到的数据，根据接收到不同的数据类型，进行相应的操作
 6. 时钟说明：
 ```go
 heartbeatTimeout // 发送心跳的时间间隔
@@ -28,6 +28,7 @@ heartbeatElapsed // 距离上一次发送心跳已经过去的时间
 electionTimeout // 选举超时的时间间隔
 electionElapsed // 距离上一次进行选举已经过去的时间
 ```
+详细信息见`raft/raft.go`中`config`的定义
 ## raft基础
 1. term在Raft算法中作为**逻辑时钟**
 2. 服务器之间通信时会交换当term

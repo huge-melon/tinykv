@@ -197,24 +197,57 @@ func (r *Raft) sendHeartbeat(to uint64) {
 	r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgHeartbeat, To: to, From: r.id, Term: r.Term})
 }
 
+// sendRequestVote sends a RequestVote RPC to the given peer. MINE
+func (r *Raft) sendRequestVote(to uint64) {
+	r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgRequestVote, To: to, From: r.id, Term: r.Term})
+}
+
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
 	// heartbeatTicker := time.NewTicker(time.Duration(r.heartbeatTimeout) * time.Millisecond)
 	// electionTicker := time.NewTicker(time.Duration(r.electionTimeout) * time.Millisecond)
+	// tick() 如果角色是leader，则每次heartbeatElapsed 向其他节点，发送心跳
+	// 如果角色是follower，或者candidate，接收到有效心跳则，选举超时计时归零，否则
 	r.electionElapsed++
 	r.heartbeatElapsed++
-	if r.heartbeatElapsed == r.heartbeatTimeout {
-		r.electionElapsed = 0
-		for peer, _ := range r.votes {
-			if peer != r.id {
-				r.sendHeartbeat(peer)
+	switch r.State {
+	case StateLeader:
+		if r.heartbeatElapsed == r.heartbeatTimeout {
+			// leader以heartbeatTimeout为间隔，向其他node发送心跳
+			r.electionElapsed = 0
+			for peer, _ := range r.votes {
+				if peer != r.id {
+					r.sendHeartbeat(peer)
+				}
 			}
 		}
-	}
-	if r.electionElapsed == r.electionTimeout {
-		r.electionElapsed = 0
-
+	case StateCandidate:
+		if r.electionElapsed == r.electionTimeout {
+			r.electionElapsed = 0
+			// 超时term+1开始选举
+			r.Term += 1
+			for peer, _ := range r.votes {
+				if peer != r.id {
+					r.sendRequestVote(peer)
+				} else {
+					r.votes[r.id] = true // vote itself
+				}
+			}
+		}
+	case StateFollower:
+		if r.electionElapsed == r.electionTimeout {
+			// 超时term+1开始选举
+			r.becomeCandidate()
+			r.Term += 1
+			for peer, _ := range r.votes {
+				if peer != r.id {
+					r.sendRequestVote(peer)
+				} else {
+					r.votes[r.id] = true // vote itself
+				}
+			}
+		}
 	}
 
 }
@@ -248,9 +281,9 @@ func (r *Raft) Step(m pb.Message) error {
 
 	switch m.GetMsgType() {
 	case pb.MessageType_MsgHeartbeat:
-		r.handleHeartbeat(m)
+		r.handleHeartbeat(m) // 处理接收到的心跳
 	case pb.MessageType_MsgPropose:
-		r.handleAppendEntries(m)
+		r.handleAppendEntries(m) // 处理接收到的entry信息
 	case pb.MessageType_MsgAppend:
 		if r.State == StateFollower && m.GetTerm() > r.Term {
 			r.Term = m.GetTerm()
@@ -274,6 +307,12 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	// 接收到有效的heatbeat才会重置选举超时
+}
+
+// handleRequestVote handle Vote RPC request MINE
+func (r *Raft) handleRequestVote(m pb.Message) {
+
 }
 
 // handleSnapshot handle Snapshot RPC request
