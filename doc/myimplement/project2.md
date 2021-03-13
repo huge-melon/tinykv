@@ -4,8 +4,8 @@
 1. `raft/raft.go` 实现其中的函数
 2. `raft/rawnode.go`
 3. `raft/log.go`
-
 4. 了解这里边的接口定义`proto/proto/eraftpb.proto`
+5. `2A`除了完成选举部分的逻辑，还要完成log部分的逻辑
 
 ## 函数说明
 1. 创建一个raft节点，要注意config
@@ -49,16 +49,15 @@ electionElapsed // 距离上一次进行选举已经过去的时间
    1. 自己收到超半数vote，转为leader，向其他node发送心跳，确定自己的地位，其他节点收到后重置选举超时计时
    2. 其他节点成为leader，转为 follower
    3. 平局，等待超时重新选举
-6. 竞争的情况：
+6. 投票的条件：
+   1. 同一任期，一个node只会投一次票，先来先服务
+   2. candidate 可能会收到另一个声称自己是 leader 的服务器节点发来的 AppendEntries RPC 。如果这个 leader 的任期号（包含在RPC中）不小于 candidate 当前的任期号，那么 candidate 会承认该 leader 的合法地位并回到 follower 状态。 如果 RPC 中的任期号比自己的小，那么 candidate 就会拒绝这次的 RPC 并且继续保持 candidate 状态。
+   3. 拒接/投票 一个candidate发来的投票申请
+      - **candidate 日志**比自己的新，则投票，否则拒绝
+      - 注：这里是**要求日志一样新**，而不是Term
+7. 竞争的情况：
    1. 等待投票期间，candidate 可能会收到另一个声称自己是 leader 的服务器节点发来的 AppendEntries RPC：
       - 如果 leader 的任期号（包含在RPC中）>= candidate 当前的任期号,candidate转为follower，并设置自己的leader及term
       - 否则，拒绝该RPC
    2. 票数相等：等待超时进行下一轮选举
       - 选举超时时间是从一个固定的区间（例如 150-300 毫秒）随机选择；实际情况下心跳间隔(0.5-20ms)，选举超时(10-500ms)
-
-
-
-   ElectionTick is the number of Node.Tick invocations that must pass between elections. That is, if a follower does not receive any message from the leader of current term before ElectionTick has elapsed, it will become candidate and start an election. ElectionTick must be greater than HeartbeatTick. We suggest ElectionTick = 10 * HeartbeatTick to avoid unnecessary leader switching.
-
-
-	HeartbeatTick is the number of Node.Tick invocations that must pass between heartbeats. That is, a leader sends heartbeat messages to maintain its leadership every HeartbeatTick ticks.
