@@ -108,6 +108,7 @@ func TestLeaderCycle2AA(t *testing.T) {
 		n.send(pb.Message{From: campaignerID, To: campaignerID, MsgType: pb.MessageType_MsgHup})
 
 		for _, peer := range n.peers {
+			// 这里每个节点都要发起投票，所以必须要Term+1，否则违反每个term投一次票的原则，这里没有超时，所以需要在发起请求的时候将本Term+1
 			sm := peer.(*Raft)
 			if sm.id == campaignerID && sm.State != StateLeader {
 				t.Errorf("campaigning node %d state = %v, want StateLeader",

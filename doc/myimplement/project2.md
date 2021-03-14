@@ -61,3 +61,16 @@ electionElapsed // 距离上一次进行选举已经过去的时间
       - 否则，拒绝该RPC
    2. 票数相等：等待超时进行下一轮选举
       - 选举超时时间是从一个固定的区间（例如 150-300 毫秒）随机选择；实际情况下心跳间隔(0.5-20ms)，选举超时(10-500ms)
+8. 当一个节点成为leader后：
+   1. leader 必须有关于哪些日志条目被提交了的最新信息。Leader 完整性特性保证了 leader 一定拥有所有已经被提交的日志条目，但是在它任期开始的时候，它可能不知道哪些是已经被提交的。为了知道这些信息，它需要在它的任期里提交一个日志条目。Raft 通过让 leader 在任期开始的时候提交一个空的没有任何操作的日志条目到日志中来处理该问题
+   2. leader 接收到一个 MessageType_MsgPropose请求
+   3. 处理MessageType_MsgPropose，并调用sendAppend方法将其中的日志发送到其他节点，Message中一次可包含多条日志
+   4. 在发送 AppendEntries RPC 的时候，leader 会将前一个日志条目的索引位置和任期号包含在里面。如果 follower 在它的日志中找不到包含相同索引位置和任期号的条目，那么他就会拒绝该新的日志条目。
+   5. 要使得 follower 的日志跟自己一致，leader 必须找到两者达成一致的最大的日志条目（索引最大），删除 follower 日志中从那个点之后的所有日志条目，并且将自己从那个点之后的所有日志条目发送给 follower 。所有的这些操作都发生在对 AppendEntries RPCs 中一致性检查的回复中。Leader 针对每一个 follower 都维护了一个 nextIndex ，表示 leader 要发送给 follower 的下一个日志条目的索引。当选出一个新 leader 时，该 leader 将所有 nextIndex 的值都初始化为自己最后一个日志条目的 index 加1（图 7 中的 11）。如果 follower 的日志和 leader 的不一致，那么下一次 AppendEntries RPC 中的一致性检查就会失败。**在被 follower 拒绝之后，leaer 就会减小 nextIndex 值并重试** AppendEntries RPC 。最终 nextIndex 会在某个位置使得 leader 和 follower 的日志达成一致。此时，AppendEntries RPC 就会成功，将 follower 中跟 leader 冲突的日志条目全部删除然后追加 leader 中的日志条目（如果有需要追加的日志条目的话）。一旦 AppendEntries RPC 成功，follower 的日志就和 leader 一致，并且在该任期接下来的时间里保持一致。
+
+
+#### Log
+1. log只有在持久化之后，才可以提交
+2. log只有在提交之后才可以应用
+3. 新收到的log位于log.entries中
+4. 进行持久化之后再更新stabled

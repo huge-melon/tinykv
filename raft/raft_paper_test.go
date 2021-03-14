@@ -890,12 +890,12 @@ func commitNoopEntry(r *Raft, s *MemoryStorage) {
 	if r.State != StateLeader {
 		panic("it should only be used when it is the leader")
 	}
-	for id := range r.Prs {
+	for id := range r.Prs { // 通过prs遍历所有的节点，而不是votes **
 		if id == r.id {
 			continue
 		}
 
-		r.sendAppend(id)
+		r.sendAppend(id) // 向每个节点发送一个空节点
 	}
 	// simulate the response of MessageType_MsgAppend
 	msgs := r.readMessages()

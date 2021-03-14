@@ -71,26 +71,47 @@ func (l *RaftLog) maybeCompact() {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
+	if len(l.entries) > 0 {
+		offset := l.entries[0].GetIndex()
+		return l.entries[l.stabled-offset+1:]
+	}
 	return nil
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return nil
+	// 只有持久化之后才能提交
+	ents, _ = l.storage.Entries(l.applied, l.committed+1) //前闭后开区间
+	return
+
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	if lastIndex, err := l.storage.LastIndex(); err == nil {
-		return lastIndex
+	if len(l.entries) > 0 {
+		return l.entries[len(l.entries)-1].GetIndex()
 	}
-	return 0
+	lastI, _ := l.storage.LastIndex()
+	return lastI
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
+	// Term 分为两个部分，从RaftLog中取数据和从Storage中取数据
+	var offset uint64
+	if len(l.entries) > 0 {
+		offset = l.entries[0].GetIndex()
+		if i < offset {
+			return l.storage.Term(i)
+		} else if i > l.entries[len(l.entries)-1].GetIndex() {
+			return None, ErrUnavailable
+		} else {
+			return l.entries[i-offset].GetTerm(), nil
+		}
+	}
 	return l.storage.Term(i)
+
 }
