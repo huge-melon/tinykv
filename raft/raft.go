@@ -202,6 +202,9 @@ func newRaft(c *Config) *Raft {
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
+
+	// 测试用例：TestLeaderCycle2AA
+	r.Vote = None
 	var prevLogTerm uint64
 	var prevLogIndex uint64
 	if r.Prs[to].Next-1 >= 0 {
@@ -281,6 +284,8 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	r.Term++
+	// 在变为candidate的时候才增加Term
 	r.State = StateCandidate
 }
 
@@ -319,11 +324,15 @@ func (r *Raft) Step(m pb.Message) error {
 		// 超时开始选举，不负责Term更新，Term更新应该放在这里，根据TestLeaderCycle2AA中的逻辑
 		// 从测试代码的逻辑中，应该先超时后先发送信息，接到信息后再转换为condidate
 		// 并且term的修改在tick()中完成
+		if r.State == StateLeader {
+			break
+		}
+
 		// random reset electionTimeout
 		rand.Seed(time.Now().UnixNano())
 		r.currentElectionTimeout = rand.Intn(r.electionTimeout) + r.electionTimeout
 		r.becomeCandidate()
-		r.Term++
+		// r.Term++
 		// 见raft/raft_test.go LINE:1179
 		r.votes[r.id] = true // vote itself
 		r.Vote = r.id
@@ -383,7 +392,7 @@ func (r *Raft) Step(m pb.Message) error {
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
-	if r.Term < m.Term {
+	if r.Term <= m.Term {
 		r.becomeFollower(m.Term, m.From)
 	}
 	for _, entry := range m.Entries {
