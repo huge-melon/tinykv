@@ -228,16 +228,9 @@ func (r *Raft) sendHeartbeat(to uint64) {
 
 // sendRequestVote sends a RequestVote RPC to the given peer. MINE
 func (r *Raft) sendRequestVote(to uint64) {
-	var logTerm uint64
-	var err error
-	if len(r.RaftLog.entries) == 0 {
-		logTerm = None
-	} else {
-		logTerm, err = r.RaftLog.Term(r.RaftLog.LastIndex())
-	}
-	if err == nil {
-		r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgRequestVote, To: to, From: r.id, Term: r.Term, Index: r.RaftLog.LastIndex(), LogTerm: logTerm})
-	}
+	logTerm, _ := r.RaftLog.Term(r.RaftLog.LastIndex())
+	r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgRequestVote, To: to, From: r.id, Term: r.Term, Index: r.RaftLog.LastIndex(), LogTerm: logTerm})
+
 }
 
 // tick advances the internal logical clock by a single tick.
@@ -258,16 +251,12 @@ func (r *Raft) tick() {
 	case StateCandidate:
 		if r.electionElapsed == r.currentElectionTimeout {
 			r.electionElapsed = 0
-			// r.Term++
-			// 见raft/raft_test.go LINE:111
 			r.Step(pb.Message{MsgType: pb.MessageType_MsgHup, From: r.id, To: r.id})
 		}
 	case StateFollower:
 		if r.electionElapsed == r.currentElectionTimeout {
 			r.electionElapsed = 0
-			// r.Term++
 			r.Step(pb.Message{MsgType: pb.MessageType_MsgHup, From: r.id, To: r.id})
-
 		}
 	}
 
@@ -324,7 +313,7 @@ func (r *Raft) Step(m pb.Message) error {
 		// 超时开始选举，不负责Term更新，Term更新应该放在这里，根据TestLeaderCycle2AA中的逻辑
 		// 从测试代码的逻辑中，应该先超时后先发送信息，接到信息后再转换为condidate
 		// 并且term的修改在tick()中完成
-		if r.State == StateLeader {
+		if r.State == StateLeader { // 如果当前状态是leader，则不需要
 			break
 		}
 
@@ -332,8 +321,7 @@ func (r *Raft) Step(m pb.Message) error {
 		rand.Seed(time.Now().UnixNano())
 		r.currentElectionTimeout = rand.Intn(r.electionTimeout) + r.electionTimeout
 		r.becomeCandidate()
-		// r.Term++
-		// 见raft/raft_test.go LINE:1179
+
 		r.votes[r.id] = true // vote itself
 		r.Vote = r.id
 		r.votesCount = 1
@@ -412,7 +400,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
 	// 接收到有效的heatbeat才会重置选举超时
-	if m.Term >= r.Term {
+	if m.Term >= r.Term { // 发送heartbeat的前提是，已经选举成为leader，
 		r.becomeFollower(m.GetTerm(), m.GetFrom())
 		r.electionElapsed = 0
 	}
