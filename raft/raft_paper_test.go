@@ -903,11 +903,11 @@ func commitNoopEntry(r *Raft, s *MemoryStorage) {
 		if m.MsgType != pb.MessageType_MsgAppend || len(m.Entries) != 1 || m.Entries[0].Data != nil {
 			panic("not a message to append noop entry")
 		}
-		r.Step(acceptAndReply(m))
+		r.Step(acceptAndReply(m)) // 在这一步应该处理提交逻辑
 	}
 	// ignore further messages to refresh followers' commit index
 	r.readMessages()
-	s.Append(r.RaftLog.unstableEntries())
+	s.Append(r.RaftLog.unstableEntries()) // 这里append之后，对log中的entries没有删除
 	r.RaftLog.applied = r.RaftLog.committed
 	r.RaftLog.stabled = r.RaftLog.LastIndex()
 }

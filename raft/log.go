@@ -57,6 +57,10 @@ type RaftLog struct {
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
 	return &RaftLog{
+		committed: 0,
+		applied:   0,
+		stabled:   0,
+		// entries:   []pb.Entry{{Index: 0, Term: 0}},
 		storage: storage,
 	}
 }
@@ -72,8 +76,9 @@ func (l *RaftLog) maybeCompact() {
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
 	if len(l.entries) > 0 {
-		offset := l.entries[0].GetIndex()
-		return l.entries[l.stabled-offset+1:]
+		// offset := l.entries[0].GetIndex()
+		return l.entries
+		// return l.entries[l.stabled-offset+1:] // 持久化后应该内存中为空
 	}
 	return nil
 }
@@ -97,21 +102,67 @@ func (l *RaftLog) LastIndex() uint64 {
 	return lastI
 }
 
+// storage
+// 现在取索引时是将index作为数组下标来取的，但是index和数组下标不是对应的
+func (l *RaftLog) GetEntryByIndex(i uint64) (*pb.Entry, error) {
+	firstIndex, _ := l.storage.FirstIndex()
+
+	if i > l.LastIndex() || i < firstIndex {
+		return nil, ErrUnavailable
+	}
+	if i >= l.entries[0].GetIndex() {
+		return &l.entries[i-l.entries[0].GetIndex()], nil
+	} else {
+		if ent, err := l.storage.Entries(i, i+1); err != nil {
+			return nil, err
+		} else {
+			return &ent[0], nil
+		}
+	}
+}
+
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
 	// Term 分为两个部分，从RaftLog中取数据和从Storage中取数据
 	var offset uint64
+	if i == 0 {
+		return 0, nil
+	}
 	if len(l.entries) > 0 {
 		offset = l.entries[0].GetIndex()
-		if i < offset {
-			return l.storage.Term(i)
-		} else if i > l.entries[len(l.entries)-1].GetIndex() {
+		if i > l.entries[len(l.entries)-1].GetIndex() {
 			return None, ErrUnavailable
 		} else {
 			return l.entries[i-offset].GetTerm(), nil
 		}
 	}
 	return l.storage.Term(i)
+}
 
+func (l *RaftLog) Append(ents []*pb.Entry) {
+	// 插入数据, 注,不同的地方要进行修改
+	// 之后不一样的数据全部丢弃
+	if len(ents) == 0 {
+		return
+	}
+	if len(l.entries) != 0 {
+		offset := l.entries[0].Index
+
+		if ents[0].Index <= offset {
+			l.entries = []pb.Entry{}
+		} else {
+			l.entries = l.entries[:ents[0].Index-offset]
+		}
+	}
+	for _, ent := range ents {
+		l.entries = append(l.entries, *ent)
+	}
+}
+
+func (l *RaftLog) CommitIndex(i uint64) {
+	// 先持久化，再提交
+	// 将i及i之前的所有entries 都提交
+	l.stabled = i
+	l.committed = i
 }

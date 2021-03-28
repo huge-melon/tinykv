@@ -141,6 +141,7 @@ func (ms *MemoryStorage) Term(i uint64) (uint64, error) {
 }
 
 // LastIndex implements the Storage interface.
+// If entries is empty, return 0. If there is only one entry in ents, return
 func (ms *MemoryStorage) LastIndex() (uint64, error) {
 	ms.Lock()
 	defer ms.Unlock()
@@ -151,7 +152,7 @@ func (ms *MemoryStorage) lastIndex() uint64 {
 	return ms.ents[0].Index + uint64(len(ms.ents)) - 1
 }
 
-// FirstIndex implements the Storage interface.
+// FirstIndex implements the Storage interface. if entires is empty, reutrn 1
 func (ms *MemoryStorage) FirstIndex() (uint64, error) {
 	ms.Lock()
 	defer ms.Unlock()

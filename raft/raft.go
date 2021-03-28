@@ -123,6 +123,8 @@ type Raft struct {
 	// log replication progress of each peers
 	Prs map[uint64]*Progress
 
+	// // commitCount counts commit node at nextIndex
+	// commitCount uint32
 	// this peer's role
 	State StateType
 
@@ -192,8 +194,8 @@ func newRaft(c *Config) *Raft {
 		State:                  StateFollower,
 		votes:                  votes,
 		Prs:                    prs,
-		// msgs:             make([]pb.Message, 0),
-		Term:    0, // 初始化term为1
+		// msgs:                   make([]pb.Message, 1),
+		Term:    0, // 初始term为0
 		RaftLog: newLog(c.Storage),
 	}
 }
@@ -202,20 +204,26 @@ func newRaft(c *Config) *Raft {
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
-
-	// 测试用例：TestLeaderCycle2AA
 	r.Vote = None
 	var prevLogTerm uint64
 	var prevLogIndex uint64
-	if r.Prs[to].Next-1 >= 0 {
-		prevLogIndex = r.Prs[to].Next - 1
-		prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
-	} else {
-		prevLogIndex = 0
-		prevLogTerm = 0
-	}
+
+	prevLogIndex = r.Prs[to].Next - 1
+	prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
+
 	// Message 中的Index和LogTerm对应论文中的preLogIndex 和 prevLogTerm
-	r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppend, From: r.id, To: to, Term: r.Term, LogTerm: prevLogTerm, Index: prevLogIndex, Entries: []*pb.Entry{&r.RaftLog.entries[r.Prs[to].Next]}, Commit: r.RaftLog.committed})
+	entry, _ := r.RaftLog.GetEntryByIndex(r.Prs[to].Next)
+	message := pb.Message{ // log中index的顺序应该从1开始
+		MsgType: pb.MessageType_MsgAppend,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+		LogTerm: prevLogTerm,
+		Index:   prevLogIndex,
+		Entries: []*pb.Entry{entry}, // 发送要给其发送的下一条log的index
+		Commit:  r.RaftLog.committed,
+	}
+	r.msgs = append(r.msgs, message)
 
 	return true
 }
@@ -236,8 +244,6 @@ func (r *Raft) sendRequestVote(to uint64) {
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
-	// tick() 如果角色是leader，则每次heartbeatElapsed 向其他节点，发送心跳
-	// 如果角色是follower，或者candidate，接收到有效心跳则，选举超时计时归零，否则
 	r.electionElapsed++
 	r.heartbeatElapsed++
 	switch r.State {
@@ -283,21 +289,34 @@ func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
 	r.State = StateLeader
+	// something wrong at there
 	for peer, _ := range r.Prs { // 将所有nextIndex 初始化为自己最后一个log的index加一
-		if len(r.RaftLog.entries) == 0 {
-			r.Prs[peer].Next = 0 // 没有考虑entries全部持久化后，清空的情况 (所有的len(r.RaftLog.entries) == 0都不完整)**
-		} else {
-			r.Prs[peer].Next = r.RaftLog.LastIndex() + 1
-		}
+
+		r.Prs[peer].Match = 0                        // 初始状态下match为0
+		r.Prs[peer].Next = r.RaftLog.LastIndex() + 1 // 初始状态下为leader最后一条日志+1
+
 	}
-	var index uint64
-	if len(r.RaftLog.entries) == 0 {
-		index = 0
-	} else {
-		index = r.RaftLog.LastIndex() + 1
+
+	// 成为leader 后向本地节点添加一个空的entry
+	preIndex := r.RaftLog.LastIndex()
+	preTerm, _ := r.RaftLog.Term(preIndex)
+
+	entry := pb.Entry{
+		EntryType: pb.EntryType_EntryNormal,
+		Term:      r.Term,
+		Index:     preIndex + 1,
+		Data:      nil,
 	}
-	// 成为leader 后向其他节点发一条空消息
-	r.Step(pb.Message{MsgType: pb.MessageType_MsgPropose, From: r.id, To: r.id, Entries: []*pb.Entry{{EntryType: pb.EntryType_EntryNormal, Term: r.Term, Index: index, Data: []byte{}}}})
+	message := pb.Message{
+		MsgType: pb.MessageType_MsgPropose,
+		From:    r.id,
+		To:      r.id,
+		Term:    r.Term,
+		LogTerm: preTerm,
+		Index:   preIndex,
+		Entries: []*pb.Entry{&entry},
+	}
+	r.Step(message) // 向本地发送一个空消息
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -326,7 +345,7 @@ func (r *Raft) Step(m pb.Message) error {
 		r.Vote = r.id
 		r.votesCount = 1
 		if len(r.votes) < 2 {
-			r.becomeLeader() // 如果集群只有一个节点
+			r.becomeLeader() // if there is only one node in cluster, Become Leader immediately.
 		}
 		for peer, _ := range r.votes {
 			if peer != r.id {
@@ -354,12 +373,14 @@ func (r *Raft) Step(m pb.Message) error {
 
 	case pb.MessageType_MsgPropose: // 将本地消息添加到本地的队列中，并发送给其他节点
 		for _, ents := range m.Entries { // 将消息添加到log的entries队列中
-			r.RaftLog.entries = append(r.RaftLog.entries, *ents)
+			ents.Term = r.Term
+			ents.Index = r.RaftLog.LastIndex() + 1
+			r.RaftLog.Append([]*pb.Entry{ents})
 		}
-
-		for peer, _ := range r.Prs { // 提前设置了nextID所以发送的是，空信息
+		// TestLeaderStartReplication2AB 先不发送 这里是应该发送信息的，但是noop的
+		for peer, _ := range r.Prs {
 			if peer != r.id {
-				r.sendAppend(peer)
+				r.sendAppend(peer) // 从next 开始发消息
 			}
 		}
 
@@ -367,31 +388,85 @@ func (r *Raft) Step(m pb.Message) error {
 		r.handleAppendEntries(m) // 处理接收到的entry信息
 
 	case pb.MessageType_MsgAppendResponse: // 如果一个消息，通过的数量超过一半，则提交
-		if !m.Reject { // 没有被拒绝
-			r.Prs[m.GetFrom()].Next = m.GetIndex()
-			// 如果对一个index上的日志回复确定，超过一半则，提交该日志
+		// 处理每个node返回的请求，统计当前消息返回true的数量
+		if m.Reject {
+			if m.Term > r.Term {
+				// Reply false if term < currentTerm
+				r.Term = m.Term
+				r.sendAppend(m.From)
+			} else {
+				// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
+				// If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+				r.Prs[m.From].Next--
+				r.sendAppend(m.From)
+			}
+
+		} else {
+			r.Prs[m.From].Next++
+			r.Prs[m.From].Match = m.Index
+			if r.Prs[m.From].Next < r.RaftLog.LastIndex()+1 {
+				// 继续发送
+				r.sendAppend(m.From)
+			}
+			if r.RaftLog.committed < r.RaftLog.LastIndex() {
+				count := 1
+				for id, v := range r.Prs { // 这里的过程可以使用一个全局的变量来替代 **
+					if id != r.id && r.RaftLog.LastIndex() == v.Match {
+						count++
+					}
+				}
+				if count > len(r.Prs)/2 {
+					r.RaftLog.committed = r.RaftLog.LastIndex()
+				}
+			}
 		}
 
 	}
-
 	return nil
 }
 
 // handleAppendEntries handle AppendEntries RPC request
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
+
+	// 接收到来自leader的日志请求
 	if r.Term <= m.Term {
 		r.becomeFollower(m.Term, m.From)
-	}
-	for _, entry := range m.Entries {
-		dataIndex := r.RaftLog.LastIndex()
-		dataTerm, _ := r.RaftLog.Term(dataIndex)
 
-		if entry.Term > dataTerm || (entry.Term == dataTerm && entry.Index >= dataIndex) {
-			r.becomeFollower(m.GetTerm(), m.GetFrom())
-			r.RaftLog.entries = append(r.RaftLog.entries, *entry)
-			r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Reject: false})
+		// m.Entries是slice类型，所以直接将所有的entries都添加到storage中
+		// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
+		// 有可能leader发生网络分区，leader包含了一系列未提交的日志，所以要写的日志应该由message中包含的index来决定
+		localTerm, _ := r.RaftLog.Term(m.Index)
+		if localTerm != m.LogTerm { // 没有对应的index 所对应的Term和消息中的不一样
+			r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Term: r.Term, Reject: true})
+			return
 		}
+
+		//If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+		r.RaftLog.Append(m.Entries) // 向其中插入数据
+		if m.Commit > r.RaftLog.committed {
+			if m.Commit >= m.Entries[len(m.Entries)-1].Index {
+				r.RaftLog.CommitIndex(m.Entries[len(m.Entries)-1].Index)
+				r.RaftLog.committed = m.Entries[len(m.Entries)-1].Index
+			} else {
+				r.RaftLog.CommitIndex(m.Commit)
+				r.RaftLog.committed = m.Commit
+			}
+
+		}
+		r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Index: r.RaftLog.LastIndex(), Reject: false})
+		// dataIndex := r.RaftLog.LastIndex()
+		// dataTerm, _ := r.RaftLog.Term(dataIndex)
+
+		// if entry.Term > dataTerm || (entry.Term == dataTerm && entry.Index >= dataIndex) {
+		// 	r.becomeFollower(m.GetTerm(), m.GetFrom())
+		// 	r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+		// 	r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Reject: false})
+		// }
+
+	} else { // Reply false if leader.term < currentTerm
+		r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Term: r.Term, Reject: true})
+		return
 	}
 
 }
