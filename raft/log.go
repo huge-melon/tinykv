@@ -76,9 +76,8 @@ func (l *RaftLog) maybeCompact() {
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
 	if len(l.entries) > 0 {
-		// offset := l.entries[0].GetIndex()
-		return l.entries
-		// return l.entries[l.stabled-offset+1:] // 持久化后应该内存中为空
+		offset := l.entries[0].GetIndex()
+		return l.entries[l.stabled-offset+1:]
 	}
 	return nil
 }
@@ -86,8 +85,13 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	// 只有持久化之后才能提交
-	ents, _ = l.storage.Entries(l.applied, l.committed+1) //前闭后开区间
+	// 只有持久化之后才能提交， 目前的逻辑还没涉及到storage中的写操作
+	if len(l.entries) > 0 {
+		offset := l.entries[0].Index
+		return l.entries[l.applied-offset+1 : l.committed-offset+1]
+	} else {
+		ents, _ = l.storage.Entries(l.applied, l.committed+1) //前闭后开区间
+	}
 	return
 
 }
@@ -110,7 +114,7 @@ func (l *RaftLog) GetEntryByIndex(i uint64) (*pb.Entry, error) {
 	if i > l.LastIndex() || i < firstIndex {
 		return nil, ErrUnavailable
 	}
-	if i >= l.entries[0].GetIndex() {
+	if len(l.entries) > 0 && i >= l.entries[0].GetIndex() {
 		return &l.entries[i-l.entries[0].GetIndex()], nil
 	} else {
 		if ent, err := l.storage.Entries(i, i+1); err != nil {
@@ -121,6 +125,40 @@ func (l *RaftLog) GetEntryByIndex(i uint64) (*pb.Entry, error) {
 	}
 }
 
+// GetEntries 获取指定区间内的所有entry
+func (l *RaftLog) GetEntries(lo uint64, hi uint64) ([]*pb.Entry, error) {
+	if lo > hi || hi > l.LastIndex()+1 {
+		return nil, ErrUnavailable
+	}
+	var ents []pb.Entry
+	var err error
+	if len(l.entries) == 0 {
+		ents, err = l.storage.Entries(lo, hi)
+	} else {
+		offset := l.entries[0].Index
+		if hi < offset {
+			ents, err = l.storage.Entries(lo, hi)
+		} else if lo >= offset {
+			ents, err = l.entries[lo-offset:hi-offset], nil
+		} else {
+			ents, err = l.storage.Entries(lo, offset)
+			if err == nil {
+				ents = append(ents, l.entries[offset:hi-offset]...)
+			}
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	entsPtr := []*pb.Entry{}
+	for _, ent := range ents {
+		entsPtr = append(entsPtr, &ent)
+	}
+
+	return entsPtr, nil
+}
+
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
@@ -129,7 +167,7 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 	if i == 0 {
 		return 0, nil
 	}
-	if len(l.entries) > 0 {
+	if len(l.entries) > 0 && i >= l.entries[0].GetIndex() {
 		offset = l.entries[0].GetIndex()
 		if i > l.entries[len(l.entries)-1].GetIndex() {
 			return None, ErrUnavailable

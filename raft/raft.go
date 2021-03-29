@@ -210,22 +210,25 @@ func (r *Raft) sendAppend(to uint64) bool {
 
 	prevLogIndex = r.Prs[to].Next - 1
 	prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
+	// entry, _ := r.RaftLog.GetEntryByIndex(r.Prs[to].Next)
+	// 发的时候不是一条一条的发送，而是从next->last均发送
+	if entries, err := r.RaftLog.GetEntries(r.Prs[to].Next, r.RaftLog.LastIndex()+1); err == nil {
+		// Message 中的Index和LogTerm对应论文中的preLogIndex 和 prevLogTerm
 
-	// Message 中的Index和LogTerm对应论文中的preLogIndex 和 prevLogTerm
-	entry, _ := r.RaftLog.GetEntryByIndex(r.Prs[to].Next)
-	message := pb.Message{ // log中index的顺序应该从1开始
-		MsgType: pb.MessageType_MsgAppend,
-		From:    r.id,
-		To:      to,
-		Term:    r.Term,
-		LogTerm: prevLogTerm,
-		Index:   prevLogIndex,
-		Entries: []*pb.Entry{entry}, // 发送要给其发送的下一条log的index
-		Commit:  r.RaftLog.committed,
+		message := pb.Message{
+			MsgType: pb.MessageType_MsgAppend,
+			From:    r.id,
+			To:      to,
+			Term:    r.Term,
+			LogTerm: prevLogTerm,
+			Index:   prevLogIndex,
+			Entries: entries,
+			Commit:  r.RaftLog.committed,
+		}
+		r.msgs = append(r.msgs, message)
+		return true
 	}
-	r.msgs = append(r.msgs, message)
-
-	return true
+	return false
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
@@ -378,6 +381,9 @@ func (r *Raft) Step(m pb.Message) error {
 			r.RaftLog.Append([]*pb.Entry{ents})
 		}
 		// TestLeaderStartReplication2AB 先不发送 这里是应该发送信息的，但是noop的
+		if len(r.Prs) == 1 { // 如果只有一个节点，则直接提交
+			r.RaftLog.CommitIndex(r.RaftLog.LastIndex())
+		}
 		for peer, _ := range r.Prs {
 			if peer != r.id {
 				r.sendAppend(peer) // 从next 开始发消息
@@ -401,10 +407,10 @@ func (r *Raft) Step(m pb.Message) error {
 				r.sendAppend(m.From)
 			}
 
-		} else {
-			r.Prs[m.From].Next++
+		} else if m.Index != r.Prs[m.From].Match { // 忽略重复发送的消息
 			r.Prs[m.From].Match = m.Index
-			if r.Prs[m.From].Next < r.RaftLog.LastIndex()+1 {
+			r.Prs[m.From].Next = r.Prs[m.From].Match + 1
+			if r.Prs[m.From].Next < r.RaftLog.LastIndex()+1 { // 如果是批量发送，那么这里的逻辑可能有问题
 				// 继续发送
 				r.sendAppend(m.From)
 			}
@@ -420,7 +426,6 @@ func (r *Raft) Step(m pb.Message) error {
 				}
 			}
 		}
-
 	}
 	return nil
 }

@@ -420,6 +420,8 @@ func TestLeaderCommitEntry2AB(t *testing.T) {
 	if g := r.RaftLog.nextEnts(); !reflect.DeepEqual(g, wents) {
 		t.Errorf("nextEnts = %+v, want %+v", g, wents)
 	}
+	// 这里对Message的循环遍历是到不了的, 下述语句为自己补充 **
+	// r.Step(pb.Message{From: 1, To: 1, MsgType: pb.MessageType_MsgPropose, Entries: []*pb.Entry{{Data: []byte("some data")}}})
 	msgs := r.readMessages()
 	sort.Sort(messageSlice(msgs))
 	for i, m := range msgs {
