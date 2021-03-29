@@ -56,12 +56,15 @@ type RaftLog struct {
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
+	first, _ := storage.FirstIndex()
+	last, _ := storage.LastIndex()
+	ents, _ := storage.Entries(first, last+1)
 	return &RaftLog{
 		committed: 0,
 		applied:   0,
-		stabled:   0,
-		// entries:   []pb.Entry{{Index: 0, Term: 0}},
-		storage: storage,
+		stabled:   last,
+		entries:   ents,
+		storage:   storage,
 	}
 }
 
@@ -86,14 +89,8 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
 	// 只有持久化之后才能提交， 目前的逻辑还没涉及到storage中的写操作
-	if len(l.entries) > 0 {
-		offset := l.entries[0].Index
-		return l.entries[l.applied-offset+1 : l.committed-offset+1]
-	} else {
-		ents, _ = l.storage.Entries(l.applied, l.committed+1) //前闭后开区间
-	}
+	ents, _ = l.GetEntries(l.applied+1, l.committed+1)
 	return
-
 }
 
 // LastIndex return the last index of the log entries
@@ -126,12 +123,11 @@ func (l *RaftLog) GetEntryByIndex(i uint64) (*pb.Entry, error) {
 }
 
 // GetEntries 获取指定区间内的所有entry
-func (l *RaftLog) GetEntries(lo uint64, hi uint64) ([]*pb.Entry, error) {
+func (l *RaftLog) GetEntries(lo uint64, hi uint64) (ents []pb.Entry, err error) {
 	if lo > hi || hi > l.LastIndex()+1 {
 		return nil, ErrUnavailable
 	}
-	var ents []pb.Entry
-	var err error
+
 	if len(l.entries) == 0 {
 		ents, err = l.storage.Entries(lo, hi)
 	} else {
@@ -143,20 +139,14 @@ func (l *RaftLog) GetEntries(lo uint64, hi uint64) ([]*pb.Entry, error) {
 		} else {
 			ents, err = l.storage.Entries(lo, offset)
 			if err == nil {
-				ents = append(ents, l.entries[offset:hi-offset]...)
+				ents = append(ents, l.entries[0:hi-offset]...)
 			}
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	entsPtr := []*pb.Entry{}
-	for _, ent := range ents {
-		entsPtr = append(entsPtr, &ent)
-	}
-
-	return entsPtr, nil
+	return ents, nil
 }
 
 // Term return the term of the entry in the given index
@@ -201,6 +191,6 @@ func (l *RaftLog) Append(ents []*pb.Entry) {
 func (l *RaftLog) CommitIndex(i uint64) {
 	// 先持久化，再提交
 	// 将i及i之前的所有entries 都提交
-	l.stabled = i
+	// l.stabled = i
 	l.committed = i
 }

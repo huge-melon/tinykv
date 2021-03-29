@@ -207,13 +207,11 @@ func (r *Raft) sendAppend(to uint64) bool {
 	r.Vote = None
 	var prevLogTerm uint64
 	var prevLogIndex uint64
+	lastI := r.RaftLog.LastIndex()
 
-	prevLogIndex = r.Prs[to].Next - 1
-	prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
-	// entry, _ := r.RaftLog.GetEntryByIndex(r.Prs[to].Next)
-	// 发的时候不是一条一条的发送，而是从next->last均发送
-	if entries, err := r.RaftLog.GetEntries(r.Prs[to].Next, r.RaftLog.LastIndex()+1); err == nil {
-		// Message 中的Index和LogTerm对应论文中的preLogIndex 和 prevLogTerm
+	if r.Prs[to].Next == lastI+1 { // 发送commit空消息
+		prevLogIndex = lastI
+		prevLogTerm, _ = r.RaftLog.Term(lastI)
 
 		message := pb.Message{
 			MsgType: pb.MessageType_MsgAppend,
@@ -222,7 +220,31 @@ func (r *Raft) sendAppend(to uint64) bool {
 			Term:    r.Term,
 			LogTerm: prevLogTerm,
 			Index:   prevLogIndex,
-			Entries: entries,
+			Commit:  r.RaftLog.committed,
+		}
+		r.msgs = append(r.msgs, message)
+		return true
+	}
+
+	prevLogIndex = r.Prs[to].Next - 1
+	prevLogTerm, _ = r.RaftLog.Term(prevLogIndex)
+	// entry, _ := r.RaftLog.GetEntryByIndex(r.Prs[to].Next)
+	// 发的时候不是一条一条的发送，而是从next->last均发送
+	if entries, err := r.RaftLog.GetEntries(r.Prs[to].Next, lastI+1); err == nil {
+		// Message 中的Index和LogTerm对应论文中的preLogIndex 和 prevLogTerm
+		entsP := []*pb.Entry{}
+		for i := 0; i < len(entries); i++ {
+			entsP = append(entsP, &entries[i])
+		}
+
+		message := pb.Message{
+			MsgType: pb.MessageType_MsgAppend,
+			From:    r.id,
+			To:      to,
+			Term:    r.Term,
+			LogTerm: prevLogTerm,
+			Index:   prevLogIndex,
+			Entries: entsP,
 			Commit:  r.RaftLog.committed,
 		}
 		r.msgs = append(r.msgs, message)
@@ -394,40 +416,60 @@ func (r *Raft) Step(m pb.Message) error {
 		r.handleAppendEntries(m) // 处理接收到的entry信息
 
 	case pb.MessageType_MsgAppendResponse: // 如果一个消息，通过的数量超过一半，则提交
-		// 处理每个node返回的请求，统计当前消息返回true的数量
-		if m.Reject {
-			if m.Term > r.Term {
-				// Reply false if term < currentTerm
-				r.Term = m.Term
-				r.sendAppend(m.From)
+		r.handleAppendEntriesResponse(m)
+	}
+	return nil
+}
+
+func (r *Raft) handleAppendEntriesResponse(m pb.Message) {
+	// 处理每个node返回的请求，统计当前消息返回true的数量
+	if m.Reject {
+		if m.Term > r.Term {
+			// Reply false if term < currentTerm
+			r.Term = m.Term
+			r.sendAppend(m.From)
+		} else {
+			// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
+			// If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+			r.Prs[m.From].Next--
+			r.sendAppend(m.From)
+		}
+
+	} else if m.Index != r.Prs[m.From].Match { // 忽略重复发送的消息
+		r.Prs[m.From].Match = m.Index
+		r.Prs[m.From].Next = r.Prs[m.From].Match + 1
+		// if r.Prs[m.From].Next < r.RaftLog.LastIndex()+1 { // 如果是批量发送，那么这里的逻辑可能有问题
+		// 	// 继续发送
+		// 	r.sendAppend(m.From)
+		// }
+		firstTermIndex := r.RaftLog.LastIndex()
+		for firstTermIndex-1 > 0 {
+			curTerm, _ := r.RaftLog.Term(firstTermIndex - 1)
+			if curTerm == r.Term {
+				firstTermIndex--
 			} else {
-				// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
-				// If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
-				r.Prs[m.From].Next--
-				r.sendAppend(m.From)
+				break
 			}
 
-		} else if m.Index != r.Prs[m.From].Match { // 忽略重复发送的消息
-			r.Prs[m.From].Match = m.Index
-			r.Prs[m.From].Next = r.Prs[m.From].Match + 1
-			if r.Prs[m.From].Next < r.RaftLog.LastIndex()+1 { // 如果是批量发送，那么这里的逻辑可能有问题
-				// 继续发送
-				r.sendAppend(m.From)
-			}
-			if r.RaftLog.committed < r.RaftLog.LastIndex() {
-				count := 1
-				for id, v := range r.Prs { // 这里的过程可以使用一个全局的变量来替代 **
-					if id != r.id && r.RaftLog.LastIndex() == v.Match {
-						count++
-					}
+		}
+
+		if m.Index >= firstTermIndex && m.Index > r.RaftLog.committed {
+			count := 1
+			for id, v := range r.Prs { // 这里的过程可以使用一个全局的变量来替代 **
+				if id != r.id && v.Match >= m.Index {
+					count++
 				}
-				if count > len(r.Prs)/2 {
-					r.RaftLog.committed = r.RaftLog.LastIndex()
+			}
+			if count > len(r.Prs)/2 {
+				r.RaftLog.CommitIndex(m.Index)
+				for id, _ := range r.Prs {
+					if id != r.id {
+						r.sendAppend(id)
+					}
 				}
 			}
 		}
 	}
-	return nil
 }
 
 // handleAppendEntries handle AppendEntries RPC request
@@ -448,18 +490,30 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		}
 
 		//If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
-		r.RaftLog.Append(m.Entries) // 向其中插入数据
+		for i := 0; i < len(m.Entries); i++ {
+			localTerm, _ = r.RaftLog.Term(m.Entries[i].Index)
+			if localTerm == m.Entries[i].Term {
+				m.Entries = m.Entries[1:]
+			} else {
+				break
+			}
+		}
+		if len(m.Entries) != 0 {
+			if m.Entries[0].Index <= r.RaftLog.stabled { // 这里的等于号卡了半天
+				r.RaftLog.stabled = m.Entries[0].Index - 1
+			}
+		}
+
+		r.RaftLog.Append(m.Entries)
 		if m.Commit > r.RaftLog.committed {
-			if m.Commit >= m.Entries[len(m.Entries)-1].Index {
-				r.RaftLog.CommitIndex(m.Entries[len(m.Entries)-1].Index)
-				r.RaftLog.committed = m.Entries[len(m.Entries)-1].Index
+			if m.Commit >= r.RaftLog.LastIndex() {
+				r.RaftLog.CommitIndex(r.RaftLog.LastIndex())
 			} else {
 				r.RaftLog.CommitIndex(m.Commit)
-				r.RaftLog.committed = m.Commit
 			}
 
 		}
-		r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Index: r.RaftLog.LastIndex(), Reject: false})
+		r.msgs = append(r.msgs, pb.Message{MsgType: pb.MessageType_MsgAppendResponse, From: r.id, To: m.From, Term: r.Term, Index: r.RaftLog.LastIndex(), Reject: false})
 		// dataIndex := r.RaftLog.LastIndex()
 		// dataTerm, _ := r.RaftLog.Term(dataIndex)
 
