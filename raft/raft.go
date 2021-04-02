@@ -321,7 +321,7 @@ func (r *Raft) becomeLeader() {
 		r.Prs[peer].Next = r.RaftLog.LastIndex() + 1 // 初始状态下为leader最后一条日志+1
 
 	}
-
+	r.Prs[r.id].Match = r.RaftLog.LastIndex()
 	// 成为leader 后向本地节点添加一个空的entry
 	preIndex := r.RaftLog.LastIndex()
 	preTerm, _ := r.RaftLog.Term(preIndex)
@@ -402,6 +402,8 @@ func (r *Raft) Step(m pb.Message) error {
 			ents.Index = r.RaftLog.LastIndex() + 1
 			r.RaftLog.Append([]*pb.Entry{ents})
 		}
+		r.Prs[r.id].Match += uint64(len(m.Entries))
+		r.Prs[r.id].Next = r.Prs[r.id].Match + 1
 		// TestLeaderStartReplication2AB 先不发送 这里是应该发送信息的，但是noop的
 		if len(r.Prs) == 1 { // 如果只有一个节点，则直接提交
 			r.RaftLog.CommitIndex(r.RaftLog.LastIndex())
