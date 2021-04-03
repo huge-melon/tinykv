@@ -78,7 +78,8 @@ electionElapsed // 距离上一次进行选举已经过去的时间
 4. 进行持久化之后再更新stabled
 
 
-#### 协议细节问题：
+### 协议细节问题
+#### 2AB 日志复制
 1. 如果一个node发起选举，由于遇到了一个任期号比自己还高的节点，那么其leader应该设置为谁, 目前将leader设置为term比其高的节点，但理论上应该设置为其leader id
    1. TestLeaderElectionOverwriteNewerLogs2AB
       1. 遗漏了初始化raftnode状态时，应该使用storage.InitialState()中已经持久化的参数
@@ -91,3 +92,5 @@ electionElapsed // 距离上一次进行选举已经过去的时间
 7. TestAllServerStepdown2AB(): 变为候选者时,要清空自己的lead参数
    - handleRequestVote(): 中投票并不意味着, 那个节点变为自己的Leader
 8. TestOldMessages2AB(): 对于term小于自身term，而自己又是leader的节点的appendEntry请求要忽略
+
+#### 2AC

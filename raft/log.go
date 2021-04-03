@@ -122,7 +122,7 @@ func (l *RaftLog) GetEntryByIndex(i uint64) (*pb.Entry, error) {
 	}
 }
 
-// GetEntries 获取指定区间内的所有entry
+// GetEntries 获取指定区间内的所有entry, 左闭右开区间
 func (l *RaftLog) GetEntries(lo uint64, hi uint64) (ents []pb.Entry, err error) {
 	if lo > hi || hi > l.LastIndex()+1 {
 		return nil, ErrUnavailable

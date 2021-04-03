@@ -70,12 +70,17 @@ type Ready struct {
 type RawNode struct {
 	Raft *Raft
 	// Your Data Here (2A).
+	preSoftState *SoftState
+	preHardState pb.HardState
 }
 
 // NewRawNode returns a new RawNode given configuration and a list of raft peers.
 func NewRawNode(config *Config) (*RawNode, error) {
 	// Your Code Here (2A).
-	return nil, nil
+	r := newRaft(config)
+	preSS := &SoftState{Lead: r.Lead, RaftState: r.State}
+	preHS := pb.HardState{Term: r.Term, Vote: r.Vote, Commit: r.RaftLog.committed}
+	return &RawNode{Raft: r, preSoftState: preSS, preHardState: preHS}, nil
 }
 
 // Tick advances the internal logical clock by a single tick.
@@ -143,7 +148,30 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
-	return Ready{}
+	softState := &SoftState{
+		Lead:      rn.Raft.Lead,
+		RaftState: rn.Raft.State,
+	}
+	if !rn.preSoftState.equal(softState) {
+		rn.preSoftState = softState
+	}
+	hardState := pb.HardState{
+		Term:   rn.Raft.Term,
+		Vote:   rn.Raft.Vote,
+		Commit: rn.Raft.RaftLog.committed,
+	}
+	ents := rn.Raft.RaftLog.unstableEntries()
+	snapshot, _ := rn.Raft.RaftLog.storage.Snapshot()
+	commitedEnts := rn.Raft.RaftLog.nextEnts()
+
+	return Ready{
+		SoftState:        softState,
+		HardState:        hardState,
+		Entries:          ents,
+		Snapshot:         snapshot,
+		CommittedEntries: commitedEnts,
+		Messages:         rn.Raft.msgs,
+	}
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
