@@ -148,35 +148,44 @@ func (rn *RawNode) Step(m pb.Message) error {
 // Ready returns the current point-in-time state of this RawNode.
 func (rn *RawNode) Ready() Ready {
 	// Your Code Here (2A).
-	softState := &SoftState{
-		Lead:      rn.Raft.Lead,
-		RaftState: rn.Raft.State,
-	}
-	if !rn.preSoftState.equal(softState) {
-		rn.preSoftState = softState
-	}
-	hardState := pb.HardState{
-		Term:   rn.Raft.Term,
-		Vote:   rn.Raft.Vote,
-		Commit: rn.Raft.RaftLog.committed,
-	}
-	ents := rn.Raft.RaftLog.unstableEntries()
-	snapshot, _ := rn.Raft.RaftLog.storage.Snapshot()
-	commitedEnts := rn.Raft.RaftLog.nextEnts()
+	// 只有变化了的才需要持久化
+	// snapshot, _ := rn.Raft.RaftLog.storage.Snapshot()
 
-	return Ready{
-		SoftState:        softState,
-		HardState:        hardState,
-		Entries:          ents,
-		Snapshot:         snapshot,
-		CommittedEntries: commitedEnts,
-		Messages:         rn.Raft.msgs,
+	ready := Ready{
+		Entries:          rn.Raft.RaftLog.unstableEntries(),
+		CommittedEntries: rn.Raft.RaftLog.nextEnts(),
+		// Snapshot:         snapshot,
+		Messages: rn.Raft.msgs,
 	}
+	rn.Raft.msgs = nil
+	// if isSoftStateEqual(rn.preSoftState, softState) {
+
+	// }
+	softState := rn.Raft.GetSoftState()
+	hardState := rn.Raft.GetHardState()
+
+	if !isSoftStateEqual(softState, rn.preSoftState) {
+		ready.SoftState = softState
+	}
+	if !isHardStateEqual(hardState, rn.preHardState) {
+		ready.HardState = hardState
+		rn.preHardState = hardState
+	}
+	return ready
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
 func (rn *RawNode) HasReady() bool {
 	// Your Code Here (2A).
+	if !isHardStateEqual(rn.preHardState, rn.Raft.GetHardState()) {
+		return true
+	}
+	if !isSoftStateEqual(rn.preSoftState, rn.Raft.GetSoftState()) {
+		return true
+	}
+	if len(rn.Raft.msgs) > 0 || len(rn.Raft.RaftLog.nextEnts()) > 0 || len(rn.Raft.RaftLog.unstableEntries()) > 0 {
+		return true
+	}
 	return false
 }
 
@@ -184,6 +193,13 @@ func (rn *RawNode) HasReady() bool {
 // last Ready results.
 func (rn *RawNode) Advance(rd Ready) {
 	// Your Code Here (2A).
+	if len(rd.CommittedEntries) != 0 {
+		rn.Raft.RaftLog.applied = rd.CommittedEntries[len(rd.CommittedEntries)-1].Index
+	}
+	if len(rd.Entries) != 0 {
+		rn.Raft.RaftLog.stabled = rd.Entries[len(rd.Entries)-1].Index
+	}
+
 }
 
 // GetProgress return the the Progress of this node and its peers, if this
